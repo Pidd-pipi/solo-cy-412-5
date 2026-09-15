@@ -18,8 +18,9 @@ docker compose up -d
 
 ## 主要功能
 
-- **物业工作台**：汇总待办报修、本月已收费用和近期公告。
-- **报修管理**：业主创建水电/家具/公共设施等报修；物业筛选、分配和更新进度。
+- **物业工作台**：汇总待办报修、本月已收费用和近期公告，并展示**待巡检、停用设施、未闭环巡检工单**数量。
+- **公共设施巡检与停用处置**：物业按设施与巡检周期（日/周/月/季/年）建立计划，到期自动/手动幂等生成巡检任务；同一设施同一周期只能有一项计划、同一期次只能有一项任务，计划重跑不产生重复任务。巡检发现安全隐患时设施**立即停用并只生成一张关联维修工单**；维修完成后安排复检，复检未通过保持停用并续建维修单，复检通过才恢复可用。并发接单、重复提交均只有一个结果，终态记录不可改写。
+- **报修管理**：业主创建水电/家具/公共设施等报修；物业筛选、分配和更新进度。巡检关联工单在原有报修流程中一并可处理。
 - **费用缴纳**：按业主展示账单，通过支付宝沙箱模拟完成支付和记录查询。
 - **社区公告**：置顶、发布、详情查看与阅读计数。
 - **个人中心**：更新昵称、头像 URL，并绑定楼栋、单元和房间。
@@ -75,7 +76,15 @@ cd backend && go build ./...
 | POST | `/payments/:id/pay` | 模拟支付（限流） |
 | GET/POST | `/announcements` | 公告列表 / 发布，发布需 `announcement:publish` |
 | GET | `/announcements/:id` | 公告详情并记录阅读 |
-| GET | `/dashboard/summary` | 工作台汇总 |
+| GET | `/dashboard/summary` | 工作台汇总（含巡检三项指标） |
+| GET/POST | `/facilities` | 设施列表（`?status`）/ 新增设施，`inspection:manage` |
+| GET | `/facilities/:id` | 设施详情：状态 + 巡检任务 + 关联维修工单进度 |
+| GET/POST | `/inspection-plans` | 巡检计划列表 / 按设施+周期建计划（重复返回 409） |
+| POST | `/inspection-plans/generate` | 到期生成任务，重跑幂等不重复 |
+| GET | `/inspection-tasks` | 任务列表（`?status&kind&facility_id&open=true`） |
+| PATCH | `/inspection-tasks/:id/claim` | 接单，并发仅一人成功（其余 409） |
+| POST | `/inspection-tasks/:id/routine` | 提交常规巡检 `normal|hazard`；hazard 停用设施并生成唯一工单 |
+| POST | `/inspection-tasks/:id/recheck` | 提交复检 `pass|fail`；pass 恢复，fail 维持停用并续建工单 |
 | GET | `/operation-logs` | 操作日志，`log:read` |
 
 OpenAPI 摘要位于 `backend/api/openapi.yaml`。
@@ -85,18 +94,22 @@ OpenAPI 摘要位于 `backend/api/openapi.yaml`。
 ```text
 .
 ├── frontend/
-│   ├── src/api/                # user、repair、payment、announcement 请求
+│   ├── src/api/                # user、repair、payment、announcement、facility、inspectionPlan、inspectionTask 请求
 │   ├── src/stores/             # authStore、userStore、repairStore、paymentStore
 │   ├── src/types/              # 共享实体和 permission 类型
-│   ├── src/components/common/  # StatCard、RepairStatusBadge、RepairCard 等
+│   ├── src/components/common/  # StatCard、RepairStatusBadge、RepairCard、FacilityCard、InspectionTaskCard 等
 │   ├── src/hooks/              # useAuth、useRepairStats、usePermission
-│   ├── src/pages/              # Dashboard、Repairs、Payments、Announcements、Profile
+│   ├── src/pages/              # Dashboard、Repairs、Payments、Announcements、Facilities、Inspections、Profile
 │   ├── src/router/             # 路由及 guards
 │   ├── src/utils/              # request、roleText、feeCalculator
 │   └── src/constants/          # repair、user、errorCodes
 ├── backend/
 │   ├── cmd/server/main.go
 │   ├── internal/{config,model,repository,service,handler,router,middleware,dto,constants,util}
+│   │   - 巡检模块：model/{facility,inspection_plan,inspection_task}.go、
+│   │     repository/{facility,inspection_plan,inspection_task}_repository.go、
+│   │     service/{facility,inspection_plan,inspection_task}_service.go + inspection_flow.go/inspection_cycle.go、
+│   │     handler/{facility,inspection_plan,inspection_task}_handler.go、router/{facilities,inspection_plans,inspection_tasks}.go
 │   ├── migrations/
 │   ├── api/openapi.yaml
 │   └── Dockerfile
@@ -126,6 +139,21 @@ OpenAPI 摘要位于 `backend/api/openapi.yaml`。
 - 后端使用：`backend/internal/service/permission_service.go`、`backend/internal/middleware/auth.go`、`middleware/rbac.go`、路由权限与 `backend/internal/util/formatter.go`。
 - 前端定义：`frontend/src/constants/user.ts`、`frontend/src/types/index.ts`。
 - 前端使用：`frontend/src/stores/authStore.ts`、`frontend/src/hooks/useAuth.ts`、`usePermission.ts`、`frontend/src/router/index.ts` 的 meta、`router/guards.ts`、`components/common/PermissionButton.ts`、`utils/roleText.ts` 与 `App.vue`。
+
+### FacilityStatus / InspectionTaskStatus / InspectionCycle（巡检模块）
+
+- 后端定义：`backend/internal/constants/inspection.go`；数据库列 `facilities.status`、`inspection_tasks.status/kind/cycle`；模型 `model/facility.go`、`model/inspection_plan.go`、`model/inspection_task.go`。
+- 后端使用：`service/inspection_task_service.go` 状态机、`service/inspection_flow.go`（停用/恢复/复检/续建）、`service/repair_service.go`（维修完成安排复检）、`repository/inspection_task_repository.go` 条件更新、`util/formatter.go`、`dto/requests.go` 的 `oneof` 校验、`constants/log_templates.go`。
+- 前端定义：`frontend/src/constants/inspection.ts`、`frontend/src/types/index.ts`。
+- 前端使用：`components/common/FacilityStatusBadge.vue`、`InspectionTaskStatusBadge.vue`、`FacilityCard.vue`、`InspectionTaskCard.vue`、`pages/Facilities.vue`、`pages/Inspections.vue`、`pages/Dashboard.vue`、`api/facility.ts`、`api/inspectionPlan.ts`、`api/inspectionTask.ts`。
+
+## 巡检模块的幂等与并发一致性
+
+- **唯一约束兜底**：计划 `(facility_id, cycle)` 唯一；任务 `(facility_id, kind, cycle, period_value)` 复合唯一、复检任务 `source_repair_id` 唯一；维修单 `source_task_id` 唯一。计划重跑/到期重算最多生成一条任务、一张隐患工单、一次复检。
+- **条件更新（CAS）+ 数据库事务**：接单与结果提交使用 `WHERE id=? AND status IN (...)` 的条件更新；停用设施、生成工单、推进任务在同一事务内完成。多人同时接单或重复提交时只有一个请求影响 1 行，其余返回 `409`。
+- **终态不可改写**：`done/hazard/recheck_failed/restored` 再提交一律拒绝（`409`），已完成记录不被后续调整覆盖。
+- **计数实时化**：工作台“待巡检/停用设施/未闭环工单”均为实时 `COUNT`，不维护累加计数器，从根本上避免重复累计。
+- **状态闭环**：隐患 → 设施停用 + 一张工单 → 维修完成 → 一次复检；复检未过保持停用并续建工单，循环至复检通过才恢复可用。原业主报修流程（无 `facility_id`）行为保持不变。
 
 ## 环境变量
 

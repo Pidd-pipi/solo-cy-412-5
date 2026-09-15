@@ -9,10 +9,12 @@ type DashboardHandler struct {
 	repairs  *service.RepairService
 	payments *service.PaymentService
 	anns     *service.AnnouncementService
+	facs     *service.FacilityService
+	tasks    *service.InspectionTaskService
 }
 
-func NewDashboardHandler(r *service.RepairService, p *service.PaymentService, a *service.AnnouncementService) *DashboardHandler {
-	return &DashboardHandler{r, p, a}
+func NewDashboardHandler(r *service.RepairService, p *service.PaymentService, a *service.AnnouncementService, f *service.FacilityService, t *service.InspectionTaskService) *DashboardHandler {
+	return &DashboardHandler{r, p, a, f, t}
 }
 func (h *DashboardHandler) Summary(c *gin.Context) {
 	open, _ := h.repairs.OpenCount()
@@ -21,5 +23,15 @@ func (h *DashboardHandler) Summary(c *gin.Context) {
 	if len(anns) > 3 {
 		anns = anns[:3]
 	}
-	OK(c, gin.H{"pending_repairs": open, "monthly_paid": amount, "announcements": anns})
+	due, _ := h.tasks.DueCount()
+	disabled, _ := h.facs.DisabledCount()
+	unclosed, _ := h.repairs.UnclosedFacilityCount()
+	OK(c, gin.H{
+		"pending_repairs":           open,
+		"monthly_paid":              amount,
+		"announcements":             anns,
+		"pending_inspections":       due,
+		"disabled_facilities":       disabled,
+		"unclosed_facility_repairs": unclosed,
+	})
 }

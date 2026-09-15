@@ -36,3 +36,29 @@ type CreateAnnouncementRequest struct {
 	Category string `json:"category" validate:"required,oneof=通知 活动 紧急"`
 	Top      bool   `json:"top"`
 }
+
+// ---- 公共设施巡检与停用处置 ----
+
+type CreateFacilityRequest struct {
+	Name     string `json:"name" validate:"required,min=2,max=100"`
+	Category string `json:"category" validate:"required,min=2,max=50"`
+	Location string `json:"location" validate:"required,min=2,max=200"`
+	Remark   string `json:"remark"`
+}
+
+type CreateInspectionPlanRequest struct {
+	FacilityID uint   `json:"facility_id" validate:"required"`
+	Name       string `json:"name" validate:"required,min=2,max=100"`
+	Cycle      string `json:"cycle" validate:"required,oneof=daily weekly monthly quarterly yearly"`
+	StartDate  string `json:"start_date"` // 可选，YYYY-MM-DD；缺省为今天
+}
+
+type SubmitRoutineRequest struct {
+	Result  string `json:"result" validate:"required,oneof=normal hazard"`
+	Finding string `json:"finding"`
+}
+
+type SubmitRecheckRequest struct {
+	Result  string `json:"result" validate:"required,oneof=pass fail"`
+	Finding string `json:"finding"`
+}

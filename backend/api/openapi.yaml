@@ -1,8 +1,23 @@
 openapi: 3.0.3
-info: { title: SmartEstate API, version: 1.0.0 }
+info: { title: SmartEstate API, version: 1.1.0 }
 paths:
   /healthz: { get: { summary: Health check } }
   /api/v1/auth/login: { post: { summary: Login } }
   /api/v1/repairs: { get: { summary: List repairs }, post: { summary: Create repair } }
+  /api/v1/repairs/{id}/assign: { patch: { summary: Assign repair handler } }
+  /api/v1/repairs/{id}/status: { patch: { summary: Update repair status; facility repair -> done schedules one recheck } }
   /api/v1/payments: { get: { summary: List payments }, post: { summary: Create bill } }
   /api/v1/announcements: { get: { summary: List announcements }, post: { summary: Publish announcement } }
+  /api/v1/dashboard/summary: { get: { summary: Workbench summary incl. pending_inspections, disabled_facilities, unclosed_facility_repairs } }
+  /api/v1/facilities:
+    get: { summary: List facilities (optional ?status=available|disabled) }
+    post: { summary: Create facility }
+  /api/v1/facilities/{id}: { get: { summary: Facility detail with tasks and linked repairs } }
+  /api/v1/inspection-plans:
+    get: { summary: List inspection plans }
+    post: { summary: Create plan (unique per facility+cycle, 409 on duplicate) }
+  /api/v1/inspection-plans/generate: { post: { summary: Generate due tasks; idempotent rerun } }
+  /api/v1/inspection-tasks: { get: { summary: List tasks (?status&kind&facility_id&open=true) } }
+  /api/v1/inspection-tasks/{id}/claim: { patch: { summary: Claim task; concurrent claims -> only one 200, others 409 } }
+  /api/v1/inspection-tasks/{id}/routine: { post: { summary: Submit routine result normal|hazard; hazard disables facility and creates one repair } }
+  /api/v1/inspection-tasks/{id}/recheck: { post: { summary: Submit recheck pass|fail; pass restores, fail keeps disabled and creates follow-up repair } }

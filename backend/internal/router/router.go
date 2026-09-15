@@ -11,12 +11,15 @@ import (
 )
 
 type Services struct {
-	Users         *service.UserService
-	Repairs       *service.RepairService
-	Payments      *service.PaymentService
-	Announcements *service.AnnouncementService
-	Permissions   *service.PermissionService
-	Logs          *service.OperationLogService
+	Users           *service.UserService
+	Repairs         *service.RepairService
+	Payments        *service.PaymentService
+	Announcements   *service.AnnouncementService
+	Facilities      *service.FacilityService
+	InspectionPlans *service.InspectionPlanService
+	InspectionTasks *service.InspectionTaskService
+	Permissions     *service.PermissionService
+	Logs            *service.OperationLogService
 }
 
 func New(cfg config.Config, sv Services, logger any) *gin.Engine {
@@ -34,7 +37,10 @@ func New(cfg config.Config, sv Services, logger any) *gin.Engine {
 	RegisterRepairs(protected, sv, h)
 	RegisterPayments(protected, sv, h)
 	RegisterAnnouncements(protected, sv, h)
-	d := handler.NewDashboardHandler(sv.Repairs, sv.Payments, sv.Announcements)
+	RegisterFacilities(protected, sv, h)
+	RegisterInspectionPlans(protected, sv, h)
+	RegisterInspectionTasks(protected, sv, h)
+	d := handler.NewDashboardHandler(sv.Repairs, sv.Payments, sv.Announcements, sv.Facilities, sv.InspectionTasks)
 	protected.GET("/dashboard/summary", d.Summary)
 	logs := handler.NewOperationLogHandler(sv.Logs)
 	protected.GET("/operation-logs", middleware.RequirePermission(sv.Permissions, "log:read"), logs.List)

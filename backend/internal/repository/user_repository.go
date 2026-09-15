@@ -6,8 +6,6 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrNotFound = errors.New("not found")
-
 type UserRepository struct{ DB *gorm.DB }
 
 func NewUserRepository(db *gorm.DB) *UserRepository { return &UserRepository{db} }

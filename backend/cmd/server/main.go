@@ -22,7 +22,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err = db.AutoMigrate(&model.User{}, &model.Repair{}, &model.Payment{}, &model.Announcement{}, &model.AnnouncementRead{}, &model.OperationLog{}, &model.Role{}, &model.Permission{}, &model.RolePermission{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.Repair{}, &model.Payment{}, &model.Announcement{}, &model.AnnouncementRead{}, &model.OperationLog{}, &model.Role{}, &model.Permission{}, &model.RolePermission{}, &model.Facility{}, &model.InspectionPlan{}, &model.InspectionTask{}); err != nil {
 		log.Fatal(err)
 	}
 	if err = seed(db); err != nil {
@@ -34,17 +34,35 @@ func main() {
 	pr := repository.NewPaymentRepository(db)
 	ar := repository.NewAnnouncementRepository(db)
 	lr := repository.NewOperationLogRepository(db)
-	sv := router.Services{Users: service.NewUserService(ur, logger), Repairs: service.NewRepairService(rr, ur, logger), Payments: service.NewPaymentService(pr, logger), Announcements: service.NewAnnouncementService(ar, logger), Permissions: service.NewPermissionService(), Logs: service.NewOperationLogService(lr, logger)}
+	fr := repository.NewFacilityRepository(db)
+	ir := repository.NewInspectionPlanRepository(db)
+	tr := repository.NewInspectionTaskRepository(db)
+	sv := router.Services{
+		Users:           service.NewUserService(ur, logger),
+		Repairs:         service.NewRepairService(db, rr, ur, tr, fr, logger),
+		Payments:        service.NewPaymentService(pr, logger),
+		Announcements:   service.NewAnnouncementService(ar, logger),
+		Facilities:      service.NewFacilityService(fr, tr, rr, logger),
+		InspectionPlans: service.NewInspectionPlanService(ir, fr, tr, logger),
+		InspectionTasks: service.NewInspectionTaskService(db, tr, fr, rr, logger),
+		Permissions:     service.NewPermissionService(),
+		Logs:            service.NewOperationLogService(lr, logger),
+	}
+	// 启动时幂等重跑一次到期任务生成；可安全重复执行，不会产生重复任务。
+	if _, e := sv.InspectionPlans.GenerateDue(time.Now()); e != nil {
+		log.Printf("generate due inspection tasks failed: %v", e)
+	}
 	log.Printf("SmartEstate server listening on :%s", cfg.Port)
 	if err = router.New(cfg, sv, logger).Run(":" + cfg.Port); err != nil {
 		log.Fatal(err)
 	}
 }
 func openDB(c config.Config) (*gorm.DB, error) {
+	gormCfg := &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true}
 	if c.DBDriver == "mysql" {
-		return gorm.Open(mysql.Open(c.DSN), &gorm.Config{})
+		return gorm.Open(mysql.Open(c.DSN), gormCfg)
 	}
-	return gorm.Open(sqlite.Open(c.DSN), &gorm.Config{})
+	return gorm.Open(sqlite.Open(c.DSN), gormCfg)
 }
 func seed(db *gorm.DB) error {
 	var n int64
@@ -71,11 +89,51 @@ func seed(db *gorm.DB) error {
 	if e = db.Create(&model.Announcement{Title: "夏季消防安全提醒", Content: "请勿在楼道堆放杂物，保持消防通道畅通。", Category: "紧急", PublisherID: users[1].ID, PublishAt: time.Now(), Top: true}).Error; e != nil {
 		return e
 	}
-	for _, p := range []model.Permission{{Code: "repair:manage", Name: "报修管理"}, {Code: "payment:manage", Name: "收费管理"}, {Code: "announcement:publish", Name: "公告发布"}, {Code: "log:read", Name: "日志查看"}} {
+	if e = seedInspections(db, users); e != nil {
+		return e
+	}
+	for _, p := range []model.Permission{{Code: "repair:manage", Name: "报修管理"}, {Code: "payment:manage", Name: "收费管理"}, {Code: "announcement:publish", Name: "公告发布"}, {Code: "log:read", Name: "日志查看"}, {Code: "inspection:manage", Name: "设施巡检管理"}} {
 		if e = db.Create(&p).Error; e != nil {
 			return e
 		}
 	}
 	fmt.Print("")
 	return nil
+}
+
+// seedInspections 写入巡检模块演示数据：可用设施（待巡检任务）与停用设施（隐患工单处置中）。
+func seedInspections(db *gorm.DB, users []model.User) error {
+	first := model.Facility{Name: "1号楼电梯", Category: "电梯", Location: "1号楼1单元", Status: constants.FacilityStatusAvailable}
+	second := model.Facility{Name: "地下车库消防泵房", Category: "消防", Location: "地下一层B区", Status: constants.FacilityStatusDisabled, Remark: "巡检发现压力表异常，已停用待修"}
+	if e := db.Create(&first).Error; e != nil {
+		return e
+	}
+	if e := db.Create(&second).Error; e != nil {
+		return e
+	}
+	now := time.Now()
+	monthKey := now.Format("2006-01")
+	plans := []model.InspectionPlan{
+		{FacilityID: first.ID, Name: "电梯月度巡检", Cycle: constants.CycleMonthly, StartDate: now, Active: true},
+		{FacilityID: second.ID, Name: "消防泵房月度巡检", Cycle: constants.CycleMonthly, StartDate: now, Active: true},
+	}
+	if e := db.Create(&plans).Error; e != nil {
+		return e
+	}
+	routine := model.InspectionTask{FacilityID: first.ID, PlanID: &plans[0].ID, Kind: constants.TaskKindRoutine, Cycle: constants.CycleMonthly, PeriodValue: monthKey, DueDate: now, Status: constants.TaskStatusPending}
+	if e := db.Create(&routine).Error; e != nil {
+		return e
+	}
+	fid := second.ID
+	repair := model.Repair{UserID: users[1].ID, Title: "消防泵房压力表异常维修", Description: "巡检发现泵房压力表读数异常，存在安全隐患，需立即检修。", Type: "公共设施", Status: constants.RepairStatusProcessing, HandlerID: &users[1].ID, FacilityID: &fid}
+	if e := db.Create(&repair).Error; e != nil {
+		return e
+	}
+	rid := repair.ID
+	hazard := model.InspectionTask{FacilityID: second.ID, PlanID: &plans[1].ID, Kind: constants.TaskKindRoutine, Cycle: constants.CycleMonthly, PeriodValue: monthKey, DueDate: now, Status: constants.TaskStatusHazard, Result: constants.ResultHazard, Finding: "压力表读数低于安全阈值", InspectorID: &users[1].ID, ReviewedAt: &now, HazardRepairID: &rid}
+	if e := db.Create(&hazard).Error; e != nil {
+		return e
+	}
+	tid := hazard.ID
+	return db.Model(&model.Repair{}).Where("id = ?", rid).Update("source_task_id", tid).Error
 }
