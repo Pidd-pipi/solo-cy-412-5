@@ -24,8 +24,8 @@ func (h *InspectionTaskHandler) List(c *gin.Context) {
 		f.FacilityID = uint(id)
 	}
 	if v := c.Query("open"); v == "true" {
-		// 待办：未进入终态
-		f.StatusNotIn = []string{"done", "hazard", "recheck_failed", "restored"}
+		// 待办：未进入终态（含 recheck_passed 属已完成复检，不计待办）
+		f.StatusNotIn = []string{"done", "hazard", "recheck_failed", "recheck_passed", "restored"}
 	}
 	out, err := h.svc.List(f)
 	if err != nil {

@@ -63,7 +63,11 @@ func (d disposition) disableAndCreateRepair(tx *gorm.DB, t model.InspectionTask,
 }
 
 // createRecheckTask 维修完成后安排复检。同一维修单只安排一次复检（source_repair_id 唯一索引兜底）。
+// 先锁设施行，确保与“复检通过→恢复”事务互斥，避免在仍有待复检时设施被提前置为可用。
 func (d disposition) createRecheckTask(tx *gorm.DB, facilityID, repairID uint, sourceTaskID *uint) (model.InspectionTask, error) {
+	if e := d.lockFacility(tx, facilityID); e != nil {
+		return model.InspectionTask{}, e
+	}
 	exists, e := d.tasks.RecheckExistsTx(tx, repairID)
 	if e != nil {
 		return model.InspectionTask{}, fmt.Errorf("recheck dedupe repair=%d failed: %w", repairID, e)
@@ -119,10 +123,33 @@ func (d disposition) followupRepair(tx *gorm.DB, t model.InspectionTask, finding
 	return nil
 }
 
-// restore 复检通过，设施恢复可用。
-func (d disposition) restore(tx *gorm.DB, facilityID uint) error {
-	if e := d.fac.UpdateStatusInTx(tx, facilityID, constants.FacilityStatusAvailable); e != nil {
-		return fmt.Errorf("facility %d restore failed: %w", facilityID, e)
+// restoreIfAllClosed 复检通过后尝试恢复：仅当该设施再无“未闭环隐患工单”（状态非 done/closed
+// 的关联维修单）且无“待处理复检”（pending/claimed，排除当前复检）时，才把设施置回可用。
+// 调用方必须已在事务内，并通过 ByIDForUpdate 锁住设施行；并发复检因此被串行化，
+// 只有最后一个闭环触发恢复，仍有剩余工单时绝不会写入可用。返回 true 表示已恢复。
+func (d disposition) restoreIfAllClosed(tx *gorm.DB, facilityID, currentTaskID uint) (bool, error) {
+	openRepairs, e := d.repairs.CountOpenByFacilityTx(tx, facilityID)
+	if e != nil {
+		return false, fmt.Errorf("facility %d count open repairs failed: %w", facilityID, e)
+	}
+	openRechecks, e := d.tasks.CountOpenRecheckByFacilityTx(tx, facilityID, currentTaskID)
+	if e != nil {
+		return false, fmt.Errorf("facility %d count open rechecks failed: %w", facilityID, e)
+	}
+	if openRepairs > 0 || openRechecks > 0 {
+		// 仍有待处理/处理中/待复检的隐患链：保持停用，本次复检仅标记为“通过但未恢复”。
+		return false, nil
+	}
+	if e = d.fac.UpdateStatusInTx(tx, facilityID, constants.FacilityStatusAvailable); e != nil {
+		return false, fmt.Errorf("facility %d restore failed: %w", facilityID, e)
+	}
+	return true, nil
+}
+
+// lockFacility 在事务内锁定设施行，串行化同一设施的停用/复检恢复/安排复检。
+func (d disposition) lockFacility(tx *gorm.DB, facilityID uint) error {
+	if _, e := d.fac.ByIDForUpdate(tx, facilityID); e != nil {
+		return fmt.Errorf("facility %d lock failed: %w", facilityID, e)
 	}
 	return nil
 }

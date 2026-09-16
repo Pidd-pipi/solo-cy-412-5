@@ -39,19 +39,21 @@ const (
 	TaskStatusDone          = "done"           // 常规巡检无隐患（终态）
 	TaskStatusHazard        = "hazard"         // 巡检发现隐患，设施停用、已建工单（终态）
 	TaskStatusRecheckFailed = "recheck_failed" // 复检未通过，保持停用、已续建工单（终态）
-	TaskStatusRestored      = "restored"       // 复检通过，设施恢复可用（终态）
+	TaskStatusRecheckPassed = "recheck_passed" // 复检通过，但设施仍有其他未闭环隐患工单，暂不恢复（终态）
+	TaskStatusRestored      = "restored"       // 最后一条隐患链闭环、复检通过，设施恢复可用（终态）
 )
 
 // ValidTaskStatuses 合法任务状态
 var ValidTaskStatuses = map[string]bool{
 	TaskStatusPending: true, TaskStatusClaimed: true, TaskStatusDone: true,
-	TaskStatusHazard: true, TaskStatusRecheckFailed: true, TaskStatusRestored: true,
+	TaskStatusHazard: true, TaskStatusRecheckFailed: true,
+	TaskStatusRecheckPassed: true, TaskStatusRestored: true,
 }
 
 // TerminalTaskStatuses 终态任务，结果不允许被后续调整改写
 var TerminalTaskStatuses = map[string]bool{
 	TaskStatusDone: true, TaskStatusHazard: true,
-	TaskStatusRecheckFailed: true, TaskStatusRestored: true,
+	TaskStatusRecheckFailed: true, TaskStatusRecheckPassed: true, TaskStatusRestored: true,
 }
 
 // 巡检结果

@@ -152,17 +152,26 @@ func (s *InspectionTaskService) SubmitRecheck(id, userID uint, result, finding s
 		}
 		now := time.Now()
 		if result == constants.ResultPass {
-			if e = s.flow.restore(tx, t.FacilityID); e != nil {
+			// 锁住设施行，串行化并发复检：仅在所有关联隐患工单与待复检都闭环时才恢复可用。
+			if e = s.flow.lockFacility(tx, t.FacilityID); e != nil {
 				return e
+			}
+			restored, re := s.flow.restoreIfAllClosed(tx, t.FacilityID, id)
+			if re != nil {
+				return re
+			}
+			newStatus := constants.TaskStatusRecheckPassed
+			if restored {
+				newStatus = constants.TaskStatusRestored
 			}
 			ok, ae := s.flow.tasks.AdvanceInTx(tx, id,
 				[]string{constants.TaskStatusPending, constants.TaskStatusClaimed},
 				map[string]interface{}{
-					"status": constants.TaskStatusRestored, "result": constants.ResultPass,
+					"status": newStatus, "result": constants.ResultPass,
 					"finding": finding, "inspector_id": userID, "reviewed_at": now,
 				})
 			if ae != nil {
-				return fmt.Errorf("InspectionTask[id=%d] restore advance failed: %w", id, ae)
+				return fmt.Errorf("InspectionTask[id=%d] recheck-pass advance failed: %w", id, ae)
 			}
 			if !ok {
 				return ErrConflict

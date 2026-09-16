@@ -96,3 +96,41 @@ func (fx *inspectionFixture) createPlanAndTask(t *testing.T, facilityID uint, cy
 	}
 	return plan, task
 }
+
+// createHazardChain 在指定设施制造一条独立隐患链：常规任务 -> 停用 -> 维修单，返回任务与工单。
+func (fx *inspectionFixture) createHazardChain(t *testing.T, facilityID uint, period, finding string) (task model.InspectionTask, repair model.Repair) {
+	t.Helper()
+	task = model.InspectionTask{FacilityID: facilityID, Kind: constants.TaskKindRoutine,
+		Cycle: constants.CycleMonthly, PeriodValue: period, DueDate: time.Now(), Status: constants.TaskStatusPending}
+	if e := fx.db.Create(&task).Error; e != nil {
+		t.Fatalf("create routine task: %v", e)
+	}
+	res, e := fx.taskSvc.SubmitRoutine(task.ID, fx.staffID, constants.ResultHazard, finding, constants.UserRoleStaff)
+	if e != nil {
+		t.Fatalf("hazard submit: %v", e)
+	}
+	repair, e = fx.repairs.ByID(*res.HazardRepairID)
+	if e != nil {
+		t.Fatalf("load hazard repair: %v", e)
+	}
+	return res, repair
+}
+
+// completeRepairAndGetRecheck 完成维修并返回该工单新安排的待处理复检任务。
+func (fx *inspectionFixture) completeRepairAndGetRecheck(t *testing.T, facilityID, repairID uint) model.InspectionTask {
+	t.Helper()
+	if _, e := fx.repSvc.UpdateStatus(repairID, constants.RepairStatusDone, 0, constants.UserRoleStaff); e != nil {
+		t.Fatalf("complete repair %d: %v", repairID, e)
+	}
+	list, e := fx.tasks.List(repository.TaskFilter{FacilityID: facilityID, Kind: constants.TaskKindRecheck, Status: constants.TaskStatusPending})
+	if e != nil {
+		t.Fatalf("list rechecks: %v", e)
+	}
+	for _, rc := range list {
+		if rc.SourceRepairID != nil && *rc.SourceRepairID == repairID {
+			return rc
+		}
+	}
+	t.Fatalf("pending recheck for repair %d not found", repairID)
+	return model.InspectionTask{}
+}

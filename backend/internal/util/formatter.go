@@ -31,6 +31,7 @@ func TaskStatusText(v string) string {
 		constants.TaskStatusDone:          "巡检正常",
 		constants.TaskStatusHazard:        "发现隐患·停用",
 		constants.TaskStatusRecheckFailed: "复检未过·停用",
+		constants.TaskStatusRecheckPassed: "复检通过·待其余隐患闭环",
 		constants.TaskStatusRestored:      "复检通过·恢复",
 	}
 	return m[v]

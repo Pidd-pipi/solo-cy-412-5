@@ -153,6 +153,29 @@ func (r *InspectionTaskRepository) recheckExists(q *gorm.DB, repairID uint) (boo
 	return n > 0, e
 }
 
+// CountOpenRecheckByFacilityTx 事务内统计某设施仍待处理（pending/claimed）的复检任务数。
+// excludeTaskID 用于在“本次复检通过”推进状态前排除当前复检本身，避免把正在关闭的复检计为剩余。
+func (r *InspectionTaskRepository) CountOpenRecheckByFacilityTx(tx *gorm.DB, facilityID uint, excludeTaskID uint) (int64, error) {
+	var n int64
+	q := tx.Model(&model.InspectionTask{}).
+		Where("facility_id = ? AND kind = ? AND status IN ?",
+			facilityID, "recheck", []string{"pending", "claimed"})
+	if excludeTaskID != 0 {
+		q = q.Where("id <> ?", excludeTaskID)
+	}
+	e := q.Count(&n).Error
+	return n, e
+}
+
+// CountOpenRecheck 全局待处理复检任务数（工作台“未闭环巡检工单”指标，与停用状态保持同步）。
+func (r *InspectionTaskRepository) CountOpenRecheck() (int64, error) {
+	var n int64
+	e := r.DB.Model(&model.InspectionTask{}).
+		Where("kind = ? AND status IN ?", "recheck", []string{"pending", "claimed"}).
+		Count(&n).Error
+	return n, e
+}
+
 // CountDue 待巡检数量：处于 pending/claimed 且已到期的常规与复检任务（实时计数，不做累加）。
 func (r *InspectionTaskRepository) CountDue(now time.Time) (int64, error) {
 	var n int64

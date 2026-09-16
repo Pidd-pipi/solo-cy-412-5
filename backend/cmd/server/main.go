@@ -13,6 +13,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -62,7 +63,31 @@ func openDB(c config.Config) (*gorm.DB, error) {
 	if c.DBDriver == "mysql" {
 		return gorm.Open(mysql.Open(c.DSN), gormCfg)
 	}
-	return gorm.Open(sqlite.Open(c.DSN), gormCfg)
+	// SQLite：启用 WAL 与忙等待，使并发写事务在本地开发下也会阻塞重试而非立即报
+	// “database is locked”；生产使用 MySQL 时由行锁串行化。
+	dsn := c.DSN
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	if !strings.Contains(dsn, "_busy_timeout") {
+		dsn += sep + "_busy_timeout=5000"
+		sep = "&"
+	}
+	if !strings.Contains(dsn, "_journal") {
+		dsn += sep + "_journal_mode=WAL"
+	}
+	if !strings.Contains(dsn, "_txlock") {
+		dsn += sep + "_txlock=immediate"
+	}
+	db, e := gorm.Open(sqlite.Open(dsn), gormCfg)
+	if e != nil {
+		return nil, e
+	}
+	if sqlDB, e := db.DB(); e == nil {
+		sqlDB.SetMaxOpenConns(10)
+	}
+	return db, nil
 }
 func seed(db *gorm.DB) error {
 	var n int64

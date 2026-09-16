@@ -89,3 +89,12 @@ func (r *RepairRepository) CountUnclosedFacility() (int64, error) {
 		Count(&n).Error
 	return n, e
 }
+
+// CountOpenByFacilityTx 事务内统计某设施尚未闭环（done/closed）的关联维修工单数。
+func (r *RepairRepository) CountOpenByFacilityTx(tx *gorm.DB, facilityID uint) (int64, error) {
+	var n int64
+	e := tx.Model(&model.Repair{}).
+		Where("facility_id = ? AND status NOT IN ?", facilityID, []string{"done", "closed"}).
+		Count(&n).Error
+	return n, e
+}

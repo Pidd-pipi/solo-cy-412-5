@@ -118,7 +118,16 @@ func (s *RepairService) completeFacilityRepair(v *model.Repair, rating int) erro
 
 func (s *RepairService) OpenCount() (int64, error) { return s.repo.CountOpen() }
 
-// UnclosedFacilityCount 停用处置中尚未闭环的关联维修工单数（工作台指标）。
+// UnclosedFacilityCount 停用处置中尚未闭环的数量：未完成的关联维修单 + 待处理复检任务。
+// 复检等待期设施仍停用，因此并入该项可让“未闭环工单”与“停用设施”计数保持同步。
 func (s *RepairService) UnclosedFacilityCount() (int64, error) {
-	return s.repo.CountUnclosedFacility()
+	openRepairs, e := s.repo.CountUnclosedFacility()
+	if e != nil {
+		return 0, e
+	}
+	openRechecks, e := s.taskRepo.CountOpenRecheck()
+	if e != nil {
+		return 0, e
+	}
+	return openRepairs + openRechecks, nil
 }

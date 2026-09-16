@@ -279,7 +279,8 @@ func TestDashboardCountsAreConsistent(t *testing.T) {
 	if unclosed != 1 {
 		t.Fatalf("want 1 unclosed facility repair, got %d", unclosed)
 	}
-	// 完成维修 → 生成复检（仍待处理，计入待巡检），但未闭环关联工单降为 0。
+	// 完成维修 → 生成复检（待处理）。维修已 done 但复检未做，设施仍停用，
+	// 因此“未闭环”按 1 张待复检计（与停用设施保持同步）。
 	repairs, _ := fx.repairs.ListByFacility(f2.ID)
 	_, _ = fx.repSvc.UpdateStatus(repairs[0].ID, constants.RepairStatusDone, 0, constants.UserRoleStaff)
 	due, _ = fx.taskSvc.DueCount()
@@ -287,16 +288,25 @@ func TestDashboardCountsAreConsistent(t *testing.T) {
 		t.Fatalf("want 2 due (routine + recheck), got %d", due)
 	}
 	unclosed, _ = fx.repSvc.UnclosedFacilityCount()
+	if unclosed != 1 {
+		t.Fatalf("want 1 unclosed (pending recheck), got %d", unclosed)
+	}
+	// 复检通过且为唯一隐患链 → 恢复，未闭环归零。
+	rechecks, _ := fx.tasks.List(repository.TaskFilter{FacilityID: f2.ID, Kind: constants.TaskKindRecheck})
+	if _, e := fx.taskSvc.SubmitRecheck(rechecks[0].ID, fx.staffID, constants.ResultPass, "ok", constants.UserRoleStaff); e != nil {
+		t.Fatalf("recheck pass: %v", e)
+	}
+	unclosed, _ = fx.repSvc.UnclosedFacilityCount()
 	if unclosed != 0 {
-		t.Fatalf("want 0 unclosed after repair done, got %d", unclosed)
+		t.Fatalf("want 0 unclosed after recheck pass, got %d", unclosed)
+	}
+	disabled, _ = fx.facSvc.DisabledCount()
+	if disabled != 0 {
+		t.Fatalf("want 0 disabled after full closure, got %d", disabled)
 	}
 	// 重跑计划生成不影响计数。
 	if _, e := fx.planSvc.GenerateDue(time.Now()); e != nil {
 		t.Fatalf("rerun: %v", e)
-	}
-	disabled, _ = fx.facSvc.DisabledCount()
-	if disabled != 1 {
-		t.Fatalf("rerun must not double count disabled, got %d", disabled)
 	}
 }
 

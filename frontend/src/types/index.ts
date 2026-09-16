@@ -4,7 +4,7 @@ export type UserRole='resident'|'staff'|'admin'; export type RepairStatus='pendi
 export type FacilityStatus='available'|'disabled';
 export type InspectionCycle='daily'|'weekly'|'monthly'|'quarterly'|'yearly';
 export type InspectionTaskKind='routine'|'recheck';
-export type InspectionTaskStatus='pending'|'claimed'|'done'|'hazard'|'recheck_failed'|'restored';
+export type InspectionTaskStatus='pending'|'claimed'|'done'|'hazard'|'recheck_failed'|'recheck_passed'|'restored';
 export type InspectionResult='normal'|'hazard'|'pass'|'fail';
 
 export interface Facility{

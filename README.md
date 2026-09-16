@@ -84,7 +84,7 @@ cd backend && go build ./...
 | GET | `/inspection-tasks` | 任务列表（`?status&kind&facility_id&open=true`） |
 | PATCH | `/inspection-tasks/:id/claim` | 接单，并发仅一人成功（其余 409） |
 | POST | `/inspection-tasks/:id/routine` | 提交常规巡检 `normal|hazard`；hazard 停用设施并生成唯一工单 |
-| POST | `/inspection-tasks/:id/recheck` | 提交复检 `pass|fail`；pass 恢复，fail 维持停用并续建工单 |
+| POST | `/inspection-tasks/:id/recheck` | 提交复检 `pass|fail`；仅当全部隐患链闭环时 pass 恢复，否则标记 `recheck_passed` 并保持停用；fail 续建工单 |
 | GET | `/operation-logs` | 操作日志，`log:read` |
 
 OpenAPI 摘要位于 `backend/api/openapi.yaml`。
@@ -153,7 +153,8 @@ OpenAPI 摘要位于 `backend/api/openapi.yaml`。
 - **条件更新（CAS）+ 数据库事务**：接单与结果提交使用 `WHERE id=? AND status IN (...)` 的条件更新；停用设施、生成工单、推进任务在同一事务内完成。多人同时接单或重复提交时只有一个请求影响 1 行，其余返回 `409`。
 - **终态不可改写**：`done/hazard/recheck_failed/restored` 再提交一律拒绝（`409`），已完成记录不被后续调整覆盖。
 - **计数实时化**：工作台“待巡检/停用设施/未闭环工单”均为实时 `COUNT`，不维护累加计数器，从根本上避免重复累计。
-- **状态闭环**：隐患 → 设施停用 + 一张工单 → 维修完成 → 一次复检；复检未过保持停用并续建工单，循环至复检通过才恢复可用。原业主报修流程（无 `facility_id`）行为保持不变。
+- **状态闭环**：隐患 → 设施停用 + 一张工单 → 维修完成 → 一次复检；复检未过保持停用并续建工单，循环至复检通过才恢复可用。
+- **多隐患工单不提前恢复**：同一设施可同时存在多条独立隐患处置链（不同期次的隐患工单 + 各自复检）。一次复检通过只结束该复检任务（状态 `recheck_passed`），仅当该设施**所有**关联隐患维修单均已闭环（done/closed）且无待处理复检时，最后一条通过的复检才把设施置为 `restored` 并恢复可用；仍有待处理/处理中工单或待复检时一律保持停用。复检通过在事务内对设施行加锁，并发复检被串行化，只有最后一个闭环触发恢复。原业主报修流程（无 `facility_id`）行为保持不变。
 
 ## 环境变量
 
