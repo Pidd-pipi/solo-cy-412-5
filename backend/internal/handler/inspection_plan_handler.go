@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/smartestate/smartestate/internal/constants"
 	"github.com/smartestate/smartestate/internal/dto"
 	"github.com/smartestate/smartestate/internal/service"
 )
@@ -39,11 +40,15 @@ func (h *InspectionPlanHandler) Create(c *gin.Context) {
 	if !Bind(c, &r, h.Validate) {
 		return
 	}
+	// 缺省开始日为今天；一旦显式提供则必须是合法 YYYY-MM-DD，非法值不得按当天静默处理。
 	start := time.Now()
 	if r.StartDate != "" {
-		if parsed, e := time.ParseInLocation("2006-01-02", r.StartDate, time.Local); e == nil {
-			start = parsed
+		parsed, e := time.ParseInLocation("2006-01-02", r.StartDate, time.Local)
+		if e != nil {
+			Fail(c, 400, constants.CodeBadRequest, "计划开始日期不合法，格式应为 YYYY-MM-DD")
+			return
 		}
+		start = parsed
 	}
 	v, e := h.svc.Create(r.FacilityID, r.Name, r.Cycle, start)
 	if e != nil {
